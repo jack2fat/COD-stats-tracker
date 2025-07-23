@@ -1,0 +1,104 @@
+import os
+from flask import Flask, render_template_string, request, redirect, url_for, flash, session
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import DeclarativeBase
+from cod_api import CODStatsAPI, MockCODAPI
+
+class Base(DeclarativeBase):
+    pass
+
+db = SQLAlchemy(model_class=Base)
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
+
+# Configure the database
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_recycle": 300,
+    "pool_pre_ping": True,
+}
+
+# Initialize the app with the extension
+db.init_app(app)
+
+# Create tables and initialize tracker after app context
+with app.app_context():
+    import models  # Import models to register them
+    db.create_all()
+
+# Initialize tracker after models are loaded
+tracker = None
+
+# Initialize COD API
+api_key = os.environ.get('RAPIDAPI_KEY')
+if api_key:
+    cod_api = CODStatsAPI()
+else:
+    cod_api = MockCODAPI()
+
+class CODStatTracker:
+    def __init__(self, username=None):
+        from models import Player, PlayerStats
+        
+        if username:
+            # Get or create player by username
+            self.player = Player.query.filter_by(name=username).first()
+            if not self.player:
+                self.player = Player(name=username)
+                db.session.add(self.player)
+                db.session.commit()
+        else:
+            # Get or create the default player
+            self.player = Player.query.first()
+            if not self.player:
+                self.player = Player(name="PlayerOne")
+                db.session.add(self.player)
+                db.session.commit()
+        
+        # Get or create player stats
+        if not self.player.stats:
+            stats = PlayerStats(player_id=self.player.id)
+            db.session.add(stats)
+            db.session.commit()
+            self.player.stats = stats
+
+    @property
+    def player_name(self):
+        return self.player.name
+
+    @property
+    def stats(self):
+        """Return stats in dictionary format for template compatibility"""
+        stats = self.player.stats
+        return {
+            "kills": stats.kills,
+            "deaths": stats.deaths,
+            "wins": stats.wins,
+            "losses": stats.losses,
+            "matches_played": stats.matches_played
+        }
+
+    @property
+    def famous_encounters(self):
+        """Return famous encounters in dictionary format for template compatibility"""
+        encounters = {}
+        for encounter in self.player.encounters:
+            encounters[encounter.famous_player_name] = encounter.encounter_count
+        return encounters
+
+    @property
+    def total_famous_encounters(self):
+        return sum(encounter.encounter_count for encounter in self.player.encounters)
+
+    def update_stats(self, kills, deaths, wins, losses):
+        """Update player statistics"""
+        stats = self.player.stats
+        stats.kills += kills
+        stats.deaths += deaths
+        stats.wins += wins
+        stats.losses += losses
+        stats.matches_played += wins + losses
+        db.session.commit()
+
+    def ad
